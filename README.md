@@ -1,5 +1,8 @@
 Here is a README file tailored for your `server.py` file, including instructions for setting up `uvicorn` and configuring the environment variables.
 
+# Link client
+https://github.com/Duss02/app-gdg
+
 ---
 
 # Webpage Interaction and Analysis Server
