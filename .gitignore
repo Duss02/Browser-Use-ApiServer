@@ -1,0 +1,38 @@
+.DS_Store
+
+# Cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.ruff_cache
+.ipynb_checkpoints
+
+# VirtualEnvironments
+.venv
+venv/
+.vscode
+
+dist/
+
+# Data files
+*.gif
+*.txt
+*.pdf
+*.csv
+*.json
+*.jsonl
+
+# Secrets and sensitive files
+secrets.env
+.env
+browser_cookies.json
+cookies.json
+gcp-login.json
+saved_trajectories/
+AgentHistory.json
+AgentHistoryList.json
+private_example.py
+private_example
+
+uv.lock
