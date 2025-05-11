@@ -1,199 +1,213 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./static/browser-use-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="./static/browser-use.png">
-  <img alt="Shows a black Browser Use Logo in light color mode and a white one in dark color mode." src="./static/browser-use.png"  width="full">
-</picture>
-
-<h1 align="center">Enable AI to control your browser 🤖</h1>
-
-[![GitHub stars](https://img.shields.io/github/stars/gregpr07/browser-use?style=social)](https://github.com/gregpr07/browser-use/stargazers)
-[![Discord](https://img.shields.io/discord/1303749220842340412?color=7289DA&label=Discord&logo=discord&logoColor=white)](https://link.browser-use.com/discord)
-[![Cloud](https://img.shields.io/badge/Cloud-☁️-blue)](https://cloud.browser-use.com)
-[![Documentation](https://img.shields.io/badge/Documentation-📕-blue)](https://docs.browser-use.com)
-[![Twitter Follow](https://img.shields.io/twitter/follow/Gregor?style=social)](https://x.com/gregpr07)
-[![Twitter Follow](https://img.shields.io/twitter/follow/Magnus?style=social)](https://x.com/mamagnus00)
-[![Weave Badge](https://img.shields.io/endpoint?url=https%3A%2F%2Fapp.workweave.ai%2Fapi%2Frepository%2Fbadge%2Forg_T5Pvn3UBswTHIsN1dWS3voPg%2F881458615&labelColor=#EC6341)](https://app.workweave.ai/reports/repository/org_T5Pvn3UBswTHIsN1dWS3voPg/881458615)
-
-🌐 Browser-use is the easiest way to connect your AI agents with the browser.
-
-💡 See what others are building and share your projects in our [Discord](https://link.browser-use.com/discord)! Want Swag? Check out our [Merch store](https://browsermerch.com).
-
-🌤️ Skip the setup - try our <b>hosted version</b> for instant browser automation! <b>[Try the cloud ☁︎](https://cloud.browser-use.com)</b>.
-
-# Quick start
-
-With pip (Python>=3.11):
-
-```bash
-pip install browser-use
-```
-
-For memory functionality (requires Python<3.13 due to PyTorch compatibility):  
-
-```bash
-pip install "browser-use[memory]"
-```
-
-Install Patchright:
-```bash
-patchright install chromium --with-deps --no-shell
-```
-
-Spin up your agent:
-
-```python
-from langchain_openai import ChatOpenAI
-from browser_use import Agent
-import asyncio
-from dotenv import load_dotenv
-load_dotenv()
-
-async def main():
-    agent = Agent(
-        task="Compare the price of gpt-4o and DeepSeek-V3",
-        llm=ChatOpenAI(model="gpt-4o"),
-    )
-    await agent.run()
-
-asyncio.run(main())
-```
-
-Add your API keys for the provider you want to use to your `.env` file.
-
-```bash
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-AZURE_OPENAI_ENDPOINT=
-AZURE_OPENAI_KEY=
-GEMINI_API_KEY=
-DEEPSEEK_API_KEY=
-GROK_API_KEY=
-NOVITA_API_KEY=
-```
-
-For other settings, models, and more, check out the [documentation 📕](https://docs.browser-use.com).
-
-### Test with UI
-
-You can test browser-use using its [Web UI](https://github.com/browser-use/web-ui) or [Desktop App](https://github.com/browser-use/desktop).
-
-### Test with an interactive CLI
-
-You can also use our interactive CLI (similar to `claude` code):
-
-```bash
-$ browser-use
-```
-
-# Demos
-
-<br/><br/>
-
-[Task](https://github.com/browser-use/browser-use/blob/main/examples/use-cases/shopping.py): Add grocery items to cart, and checkout.
-
-[![AI Did My Groceries](https://github.com/user-attachments/assets/d9359085-bde6-41d4-aa4e-6520d0221872)](https://www.youtube.com/watch?v=L2Ya9PYNns8)
-
-<br/><br/>
-
-Prompt: Add my latest LinkedIn follower to my leads in Salesforce.
-
-![LinkedIn to Salesforce](https://github.com/user-attachments/assets/1440affc-a552-442e-b702-d0d3b277b0ae)
-
-<br/><br/>
-
-[Prompt](https://github.com/browser-use/browser-use/blob/main/examples/use-cases/find_and_apply_to_jobs.py): Read my CV & find ML jobs, save them to a file, and then start applying for them in new tabs, if you need help, ask me.'
-
-https://github.com/user-attachments/assets/171fb4d6-0355-46f2-863e-edb04a828d04
-
-<br/><br/>
-
-[Prompt](https://github.com/browser-use/browser-use/blob/main/examples/browser/real_browser.py): Write a letter in Google Docs to my Papa, thanking him for everything, and save the document as a PDF.
-
-![Letter to Papa](https://github.com/user-attachments/assets/242ade3e-15bc-41c2-988f-cbc5415a66aa)
-
-<br/><br/>
-
-[Prompt](https://github.com/browser-use/browser-use/blob/main/examples/custom-functions/save_to_file_hugging_face.py): Look up models with a license of cc-by-sa-4.0 and sort by most likes on Hugging face, save top 5 to file.
-
-https://github.com/user-attachments/assets/de73ee39-432c-4b97-b4e8-939fd7f323b3
-
-<br/><br/>
-
-## More examples
-
-For more examples see the [examples](examples) folder or join the [Discord](https://link.browser-use.com/discord) and show off your project. You can also see our [`awesome-prompts`](https://github.com/browser-use/awesome-prompts) repo for prompting inspiration.
-
-# Vision
-
-Tell your computer what to do, and it gets it done.
-
-## Roadmap
-
-### Agent
-
-- [ ] Improve agent memory to handle +100 steps
-- [ ] Enhance planning capabilities (load website specific context)
-- [ ] Reduce token consumption (system prompt, DOM state)
-
-### DOM Extraction
-
-- [ ] Enable detection for all possible UI elements
-- [ ] Improve state representation for UI elements so that all LLMs can understand what's on the page
-
-### Workflows
-
-- [ ] Let user record a workflow - which we can rerun with browser-use as a fallback
-- [ ] Make rerunning of workflows work, even if pages change
-
-### User Experience
-
-- [ ] Create various templates for tutorial execution, job application, QA testing, social media, etc. which users can just copy & paste.
-- [ ] Improve docs
-- [ ] Make it faster
-
-### Parallelization
-
-- [ ] Human work is sequential. The real power of a browser agent comes into reality if we can parallelize similar tasks. For example, if you want to find contact information for 100 companies, this can all be done in parallel and reported back to a main agent, which processes the results and kicks off parallel subtasks again.
-
-
-## Contributing
-
-We love contributions! Feel free to open issues for bugs or feature requests. To contribute to the docs, check out the `/docs` folder.
-
-## Local Setup
-
-To learn more about the library, check out the [local setup 📕](https://docs.browser-use.com/development/local-setup).
-
-
-`main` is the primary development branch with frequent changes. For production use, install a stable [versioned release](https://github.com/browser-use/browser-use/releases) instead.
+Here is a README file tailored for your `server.py` file, including instructions for setting up `uvicorn` and configuring the environment variables.
 
 ---
 
-## Swag
+# Webpage Interaction and Analysis Server
 
-Want to show off your Browser-use swag? Check out our [Merch store](https://browsermerch.com). Good contributors will receive swag for free 👀.
+This project provides a FastAPI-based web server designed to analyze and interact with web pages. The `server.py` script includes functionality to extract interactive elements from a webpage, execute actions like clicks and form submissions, and cache analysis results.
 
-## Citation
+## Features
 
-If you use Browser Use in your research or project, please cite:
+- Analyze visible and interactive elements on a webpage.
+- Execute actions such as clicks, form submissions, or input field interactions.
+- Cache analysis results to optimize repeated queries.
+- Designed with FastAPI, Pydantic, and asyncio for robust and asynchronous operations.
+- Uses `uvicorn` as the ASGI server for serving the FastAPI application.
 
-```bibtex
-@software{browser_use2024,
-  author = {Müller, Magnus and Žunič, Gregor},
-  title = {Browser Use: Enable AI to control your browser},
-  year = {2024},
-  publisher = {GitHub},
-  url = {https://github.com/browser-use/browser-use}
+---
+
+## Requirements
+
+Ensure you have the following installed:
+
+- Python 3.8 or higher
+- pip (Python package manager)
+- Google Chrome (or Chromium browser)
+- `uvicorn` for running the server
+- Environment variable configuration with `python-dotenv`
+
+---
+
+## Installation
+
+1. Clone this repository:
+
+   ```bash
+   git clone https://github.com/Duss02/server-gdg.git
+   cd server-gdg
+   ```
+
+2. Create a virtual environment:
+
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+   ```
+
+3. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+---
+
+## Environment Variables
+
+The server relies on environment variables for configuration. Create a `.env` file in your project directory and include the following variables:
+
+```env
+GEMINI_API_KEY=<Your_Google_Generative_AI_API_Key>
+```
+
+Replace `<Your_Google_Generative_AI_API_Key>` with your actual API key for accessing Google Generative AI.
+
+---
+
+## Usage
+
+### Run the Server with Uvicorn
+
+To start the server, use the following command:
+
+```bash
+uvicorn examples.server:app --host 0.0.0.0 --port 8000 --reload
+```
+
+This will start the server on `http://0.0.0.0:8000`. The `--reload` flag enables live reloading during development.
+
+---
+
+## API Endpoints
+
+### 1. **Root Endpoint**
+
+```http
+GET /
+```
+
+Returns a simple "Hello, World" response to verify the server is running.
+
+---
+
+### 2. **Analyze a Webpage**
+
+```http
+POST /analyze-webpage
+```
+
+Analyze a webpage and list all the interactive elements.
+
+**Request Body:**
+
+```json
+{
+  "link": "https://example.com"
 }
 ```
 
- <div align="center"> <img src="https://github.com/user-attachments/assets/06fa3078-8461-4560-b434-445510c1766f" width="400"/> 
- 
-[![Twitter Follow](https://img.shields.io/twitter/follow/Gregor?style=social)](https://x.com/gregpr07)
-[![Twitter Follow](https://img.shields.io/twitter/follow/Magnus?style=social)](https://x.com/mamagnus00)
- 
- </div>
+**Response:**
 
-<div align="center">
-Made with ❤️ in Zurich and San Francisco
- </div>
+Returns a JSON object describing the interactive elements on the webpage.
+
+---
+
+### 3. **Execute an Action**
+
+```http
+POST /execute-action
+```
+
+Perform a specific action on the currently open webpage.
+
+**Request Body:**
+
+- Click example:
+
+  ```json
+  {
+    "action_type": "click",
+    "element_id": "button-id",
+    "element_label": "Submit"
+  }
+  ```
+
+- Input example:
+
+  ```json
+  {
+    "action_type": "input",
+    "element_id": "input-id",
+    "element_label": "Search",
+    "value": "FastAPI"
+  }
+  ```
+
+**Response:**
+
+Returns the result of the action, including any page changes or feedback.
+
+---
+
+### 4. **Current Page Information**
+
+```http
+GET /current-page
+```
+
+Retrieves information about the currently open page.
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "page_info": {
+    "url": "https://example.com"
+  }
+}
+```
+
+---
+
+## Browser Configuration
+
+The server uses a browser automation tool to interact with web pages. Ensure you have Google Chrome installed and accessible. The `server.py` script uses the following browser configuration:
+
+- **Browser Path:** `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+- **Headless Mode:** Disabled
+- **Custom Profile Directory:** `remote-debug-profile`
+
+If necessary, update the browser path in the `server.py` script under the `BrowserConfig` section.
+
+---
+
+## Development
+
+### Running the Server
+
+To run the script and the server, execute:
+
+```bash
+python examples/server.py
+```
+
+This will start the FastAPI server.
+
+### Debugging
+
+Ensure that `logging` is set to `INFO` level to capture detailed logs:
+
+```python
+logging.basicConfig(level=logging.INFO)
+```
+
+---
+
+## License
+
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+---
+
+Feel free to customize this README further based on your project needs!
