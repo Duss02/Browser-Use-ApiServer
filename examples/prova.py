@@ -7,7 +7,8 @@ import threading
 import json
 import logging
 from enum import Enum
-from typing import Optional
+from typing import Optional, Dict, Any
+from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI 
@@ -115,18 +116,71 @@ def salva_json_pulito(json_data, percorso_file):
         print("Errore nel salvare il JSON pulito", e)
         return False
 
+# Global variables for browser context
+global_browser_context = None
+
 async def get_valid_page():
-    """Helper function to get a valid browser page, handling closed browser cases."""
-    global browser
+    """Helper function to get a valid browser page, reusing the same context when possible."""
+    global browser, global_browser_context
     try:
-        # We need to create a new context and page since the API doesn't support getting current
+        # First try to reuse the existing global context if available
+        if global_browser_context:
+            try:
+                # Check if the context is still valid
+                page = await global_browser_context.get_agent_current_page()
+                # Try a small operation to verify the page is responsive
+                await page.evaluate("1")
+                
+                # Check if the page is on localhost:3000 - if so, we should ignore it
+                current_url = page.url
+                if "localhost:3000" in current_url:
+                    logger.info("Found page on localhost:3000, looking for another page or creating a new one")
+                    
+                    # Try to get other pages from the context
+                    pages = await global_browser_context.pages()
+                    valid_page = None
+                    
+                    # Find a page that's not on localhost:3000
+                    for p in pages:
+                        page_url = p.url
+                        if "localhost:3000" not in page_url:
+                            valid_page = p
+                            logger.info(f"Found alternative page with URL: {page_url}")
+                            break
+                    
+                    if valid_page:
+                        return valid_page, False
+                    else:
+                        # No valid pages found, create a new page
+                        new_page = await global_browser_context.new_page()
+                        await new_page.goto("https://google.com")  # Navigate to a default page
+                        logger.info("Created new page in existing context")
+                        return new_page, False
+                
+                logger.info("Reusing existing browser context and page")
+                return page, False  # False indicates we're reusing an existing context
+            except Exception as e:
+                logger.info(f"Existing context is no longer valid: {str(e)}")
+                global_browser_context = None  # Invalidate the reference
+        
+        # If we're here, we need to create a new context
         try:
             # Create a new browser context
-            browser_context = await browser.new_context()
-            # Get a page from this context
-            page = await browser_context.get_agent_current_page()
+            new_context = await browser.new_context()
+            global_browser_context = new_context  # Store for future reuse
+            page = await new_context.get_agent_current_page()
+            
+            # Check if the page is on localhost:3000 - if so, create a new page
+            current_url = page.url
+            if "localhost:3000" in current_url:
+                logger.info("New page is on localhost:3000, creating another page")
+                new_page = await new_context.new_page()
+                await new_page.goto("https://google.com")  # Navigate to a default page
+                logger.info("Created new page to avoid localhost:3000")
+                return new_page, True
+                
             logger.info("Created new browser context and page")
-            return page, browser_context
+            return page, True  # True indicates we created a new context
         except Exception as e:
             logger.error(f"Failed to create context or page: {str(e)}")
             
@@ -143,11 +197,21 @@ async def get_valid_page():
                     )
                 )
                 # Create a new context and page
-                browser_context = await browser.new_context()
-                page = await browser_context.get_agent_current_page()
-                await page.goto(WebpageInfo().link)  # Navigate to default page
+                new_context = await browser.new_context()
+                global_browser_context = new_context  # Store for future reuse
+                page = await new_context.get_agent_current_page()
+                
+                # Check if the page is on localhost:3000 - if so, create a new page
+                current_url = page.url
+                if "localhost:3000" in current_url:
+                    logger.info("New page is on localhost:3000, creating another page")
+                    new_page = await new_context.new_page()
+                    await new_page.goto("https://google.com")  # Navigate to a default page
+                    logger.info("Created new page to avoid localhost:3000")
+                    return new_page, True
+                    
                 logger.info("Recreated browser and opened new page")
-                return page, browser_context
+                return page, True  # True indicates we created a new context
             except Exception as reinit_error:
                 logger.error(f"Failed to reinitialize browser: {str(reinit_error)}")
                 raise
@@ -155,12 +219,51 @@ async def get_valid_page():
         logger.error(f"Failed to get valid page after all attempts: {str(final_error)}")
         raise
 
+# Cache for page analysis results
+# Structure: {url: {"timestamp": datetime, "data": analysis_result}}
+page_analysis_cache: Dict[str, Dict[str, Any]] = {}
+# Cache TTL in minutes
+CACHE_TTL_MINUTES = 5
+
+def invalidate_cache(url: str = None):
+    """Invalidate the cache for a specific URL or all URLs."""
+    global page_analysis_cache
+    if url:
+        if url in page_analysis_cache:
+            logger.info(f"Invalidating cache for URL: {url}")
+            page_analysis_cache.pop(url)
+    else:
+        logger.info("Invalidating entire cache")
+        page_analysis_cache.clear()
+
+def get_cached_analysis(url: str):
+    """Get cached analysis for a URL if available and not expired."""
+    if url in page_analysis_cache:
+        cache_entry = page_analysis_cache[url]
+        # Check if cache is still valid
+        if datetime.now() - cache_entry["timestamp"] < timedelta(minutes=CACHE_TTL_MINUTES):
+            logger.info(f"Cache hit for URL: {url}")
+            return cache_entry["data"]
+        else:
+            logger.info(f"Cache expired for URL: {url}")
+            page_analysis_cache.pop(url)
+    return None
+
+def cache_analysis(url: str, data: Any):
+    """Cache analysis data for a URL."""
+    global page_analysis_cache
+    logger.info(f"Caching analysis for URL: {url}")
+    page_analysis_cache[url] = {
+        "timestamp": datetime.now(),
+        "data": data
+    }
+
 @app.post("/analyze-webpage")
 async def analyze_webpage(webpage_info: WebpageInfo):
     """Endpoint that analyzes a webpage using the browser agent."""
     try:
         # Get a valid page, possibly creating a new context if needed
-        page, browser_context = await get_valid_page()
+        page, new_context_created = await get_valid_page()
         
         # Navigate to the specified URL
         await page.goto(webpage_info.link)
@@ -223,9 +326,7 @@ DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE"""
         # Get the final result
         contenuto_estratto = result.final_result()
         
-        # Close the browser context only if we created a new one
-        if browser_context:
-            await browser_context.close()
+        # We don't need to close the context since we're reusing it
         
         if not contenuto_estratto:
             return {"success": False, "message": "No result obtained from analysis"}
@@ -268,12 +369,114 @@ def fix_json_format(text):
     
     return text
 
+@app.post("/analyze-current-page")
+async def analyze_current_page():
+    """Endpoint that analyzes the currently open page using the browser agent."""
+    try:
+        # Get a valid page, possibly creating a new context if needed
+        page, browser_context = await get_valid_page()
+        
+        # Get the current URL
+        current_url = await page.evaluate("window.location.href")
+        
+        # Check if we have a cached result for this URL
+        cached_result = get_cached_analysis(current_url)
+        if cached_result:
+            return {"success": True, "data": cached_result, "cached": True}
+        
+        # Run the analysis on the current page
+        task = """Analyze the webpage and in the open tab list all the elements that users can engage with. Only show the viewable elements:
+
+1. For clickable elements (buttons, links, etc.):
+{
+  "clickElements": [
+    {
+      "id": "string or null if not available",
+      "label": "text displayed on the element",
+      "description": "brief description of what this element does"
+    }
+  ]
+}
+
+2. For selection elements (dropdowns, radio groups, etc.):
+{
+  "selectElements": [
+    {
+      "id": "string or null if not available",
+      "label": "text associated with this selection element",
+      "description": "what this selection controls or affects",
+      "options": ["option1", "option2", "option3"]
+    }
+  ]
+}
+
+3. For input fields:
+{
+  "inputElements": [
+    {
+      "id": "string or null if not available",
+      "label": "field label text",
+      "description": "what information this field collects",
+      "placeholder": "placeholder text if present, otherwise empty string",
+      "type": "text, number, email, or password"
+    }
+  ]
+}
+
+Ensure you:
+- Include only elements that are currently visible and interactive
+- Accurately capture all available options for select elements
+- Determine the correct input type (text/number/email/password)
+- Use the exact element text for labels
+- Provide meaningful descriptions of each element's purpose
+- Return null for missing IDs rather than omitting the field
+
+The output must be valid JSON that strictly follows this structure.
+DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE"""
+        
+        model = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
+        agent = Agent(task, model, controller=controller, use_vision=True, browser=browser)
+        
+        # Run the agent and capture the result
+        result = await agent.run()
+        
+        # Get the final result
+        contenuto_estratto = result.final_result()
+        
+        # Don't close the context since we want to keep the page for future interactions
+        
+        if not contenuto_estratto:
+            return {"success": False, "message": "No result obtained from analysis"}
+        
+        # Extract clean JSON from the result
+        json_data = estrai_json_da_llm(contenuto_estratto)
+        logger.info(f"Raw result: {contenuto_estratto[:500]}...")  # Log the first 500 chars of the raw result
+        
+        if not json_data:
+            # Try to fix common JSON issues before giving up
+            fixed_result = fix_json_format(contenuto_estratto)
+            json_data = estrai_json_da_llm(fixed_result)
+        
+        if json_data:
+            # Cache the result
+            cache_analysis(current_url, json_data)
+            return {"success": True, "data": json_data, "cached": False}
+        else:
+            return {"success": False, "message": "Unable to extract valid JSON from result", "raw": contenuto_estratto}
+            
+    except Exception as e:
+        logger.error(f"Error in analyze-current-page: {str(e)}")
+        return {"success": False, "error": str(e)}
+
 @app.post("/execute-action")
 async def execute_action(request: ActionRequest):
     """Endpoint that executes a specific action extracted previously on the current page."""
     try:
         # Get a valid page, possibly creating a new context if needed
         page, browser_context = await get_valid_page()
+        
+        # Get the current URL before the action
+        current_url = await page.evaluate("window.location.href")
         
         # Build a description of the element based on all available details
         element_identifiers = []
@@ -339,6 +542,16 @@ async def execute_action(request: ActionRequest):
         # Get the action result
         action_result = result.final_result()
         
+        # Get the URL after the action
+        new_url = await page.evaluate("window.location.href")
+        
+        # Invalidate cache for the page since it might have changed
+        invalidate_cache(current_url)
+        
+        # If we navigated to a new page, invalidate that cache too
+        if new_url != current_url:
+            invalidate_cache(new_url)
+        
         # Don't close the browser context even if we created a new one - keep it for future use
         
         if not action_result:
@@ -349,7 +562,9 @@ async def execute_action(request: ActionRequest):
             "action_type": request.action_type,
             "element_description": element_description,
             "value": request.value,
-            "result": action_result
+            "result": action_result,
+            "url_changed": new_url != current_url,
+            "new_url": new_url if new_url != current_url else None
         }
             
     except ValueError as e:
@@ -361,6 +576,30 @@ async def execute_action(request: ActionRequest):
         raise e
     except Exception as e:
         logger.error(f"Error in execute-action: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/current-page")
+async def get_current_page():
+    """Endpoint that returns information about the currently open page."""
+    try:
+        # Get a valid page, possibly creating a new context if needed
+        page, browser_context = await get_valid_page()
+        
+        # Get only the URL of the current page using Python method
+        url = page.url
+        
+        # Create the response with the same structure, but only including URL
+        page_info = {
+            "url": url
+        }
+            
+        return {
+            "success": True,
+            "page_info": page_info
+        }
+            
+    except Exception as e:
+        logger.error(f"Error in get-current-page: {str(e)}")
         return {"success": False, "error": str(e)}
 
 # Load environment variables
