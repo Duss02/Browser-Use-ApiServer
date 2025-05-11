@@ -7,7 +7,7 @@ import threading
 import json
 import logging
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -47,6 +47,13 @@ class ActionType(str, Enum):
     CLICK = "click"
     SELECT = "select"
     INPUT = "input"
+    FORM = "form"
+
+class FormInput(BaseModel):
+    """Model for a single input in a form."""
+    field_id: Optional[str] = None
+    field_label: Optional[str] = None
+    value: str
 
 class ActionRequest(BaseModel):
     """Model for action execution request."""
@@ -54,15 +61,22 @@ class ActionRequest(BaseModel):
     element_id: Optional[str] = None  # ID dell'elemento se disponibile
     element_label: Optional[str] = None  # Testo/etichetta dell'elemento
     value: Optional[str] = None  # Valore da inserire per input/select
+    form_inputs: Optional[List[FormInput]] = None  # Lista di input per form
+    submit_form: Optional[bool] = True  # Se inviare il form dopo aver compilato i campi
     
     @root_validator(pre=True)
     def check_element_identifiers(cls, values):
         """Validate that at least one element identifier is provided."""
+        action_type = values.get('action_type')
         element_id = values.get('element_id')
         element_label = values.get('element_label')
+        form_inputs = values.get('form_inputs')
         
-        if not element_id and not element_label:
+        if action_type != ActionType.FORM and not element_id and not element_label:
             raise ValueError("At least one of element_id or element_label must be provided")
+            
+        if action_type == ActionType.FORM and not form_inputs:
+            raise ValueError("form_inputs must be provided for form actions")
         
         return values
     
@@ -119,105 +133,70 @@ def salva_json_pulito(json_data, percorso_file):
 # Global variables for browser context
 global_browser_context = None
 
+# Simplified function to get a valid page
 async def get_valid_page():
-    """Helper function to get a valid browser page, reusing the same context when possible."""
-    global browser, global_browser_context
+    """Simple helper that always creates a new context and page."""
+    global browser
+    
     try:
-        # First try to reuse the existing global context if available
-        if global_browser_context:
-            try:
-                # Check if the context is still valid
-                page = await global_browser_context.get_agent_current_page()
-                # Try a small operation to verify the page is responsive
-                await page.evaluate("1")
-                
-                # Check if the page is on localhost:3000 - if so, we should ignore it
-                current_url = page.url
-                if "localhost:3000" in current_url:
-                    logger.info("Found page on localhost:3000, looking for another page or creating a new one")
-                    
-                    # Try to get other pages from the context
-                    pages = await global_browser_context.pages()
-                    valid_page = None
-                    
-                    # Find a page that's not on localhost:3000
-                    for p in pages:
-                        page_url = p.url
-                        if "localhost:3000" not in page_url:
-                            valid_page = p
-                            logger.info(f"Found alternative page with URL: {page_url}")
-                            break
-                    
-                    if valid_page:
-                        return valid_page, False
-                    else:
-                        # No valid pages found, create a new page
-                        new_page = await global_browser_context.new_page()
-                        await new_page.goto("https://google.com")  # Navigate to a default page
-                        logger.info("Created new page in existing context")
-                        return new_page, False
-                
-                logger.info("Reusing existing browser context and page")
-                return page, False  # False indicates we're reusing an existing context
-            except Exception as e:
-                logger.info(f"Existing context is no longer valid: {str(e)}")
-                global_browser_context = None  # Invalidate the reference
+        # Create a new context and page
+        context = await browser.new_context()
+        page = await context.get_agent_current_page()
         
-        # If we're here, we need to create a new context
-        try:
-            # Create a new browser context
-            new_context = await browser.new_context()
-            global_browser_context = new_context  # Store for future reuse
-            page = await new_context.get_agent_current_page()
-            
-            # Check if the page is on localhost:3000 - if so, create a new page
-            current_url = page.url
-            if "localhost:3000" in current_url:
-                logger.info("New page is on localhost:3000, creating another page")
-                new_page = await new_context.new_page()
+        # Check if the page is on localhost:3000
+        if "localhost:3000" in page.url:
+            logger.info("Found page on localhost:3000, creating a new page")
+            try:
+                # Create a new page in the same context
+                new_page = await context.new_page()
                 await new_page.goto("https://google.com")  # Navigate to a default page
                 logger.info("Created new page to avoid localhost:3000")
-                return new_page, True
+                return new_page, context
+            except Exception as e:
+                # If creating a new page fails, close this context and create a brand new one
+                logger.warning(f"Error creating new page: {str(e)}")
+                await context.close()
                 
-            logger.info("Created new browser context and page")
-            return page, True  # True indicates we created a new context
-        except Exception as e:
-            logger.error(f"Failed to create context or page: {str(e)}")
-            
-            # Try reinitializing the browser
-            try:
-                # Reinitialize the browser
-                browser = Browser(
-                    config=BrowserConfig(
-                        browser_binary_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                        extra_browser_args=[
-                            "--user-data-dir=remote-debug-profile",
-                        ],
-                        headless=False,
-                    )
-                )
-                # Create a new context and page
+                # Create another fresh context and page
                 new_context = await browser.new_context()
-                global_browser_context = new_context  # Store for future reuse
-                page = await new_context.get_agent_current_page()
+                new_page = await new_context.new_page()
+                await new_page.goto("https://google.com")
+                logger.info("Created new context and page to avoid localhost:3000")
+                return new_page, new_context
+        
+        logger.info("Created new browser context and page")
+        return page, context
+    except Exception as e:
+        logger.error(f"Error creating context or page: {str(e)}")
+        
+        # Reinitialize the browser and try again
+        try:
+            logger.info("Reinitializing browser and trying again")
+            browser = Browser(
+                config=BrowserConfig(
+                    browser_binary_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                    extra_browser_args=[
+                        "--user-data-dir=remote-debug-profile",
+                    ],
+                    headless=False,
+                )
+            )
+            context = await browser.new_context()
+            page = await context.get_agent_current_page()
+            
+            # Check again for localhost:3000
+            if "localhost:3000" in page.url:
+                logger.info("Found page on localhost:3000 after reinitialization, creating a new page")
+                new_page = await context.new_page()
+                await new_page.goto("https://google.com")
+                logger.info("Created new page to avoid localhost:3000")
+                return new_page, context
                 
-                # Check if the page is on localhost:3000 - if so, create a new page
-                current_url = page.url
-                if "localhost:3000" in current_url:
-                    logger.info("New page is on localhost:3000, creating another page")
-                    new_page = await new_context.new_page()
-                    await new_page.goto("https://google.com")  # Navigate to a default page
-                    logger.info("Created new page to avoid localhost:3000")
-                    return new_page, True
-                    
-                logger.info("Recreated browser and opened new page")
-                return page, True  # True indicates we created a new context
-            except Exception as reinit_error:
-                logger.error(f"Failed to reinitialize browser: {str(reinit_error)}")
-                raise
-    except Exception as final_error:
-        logger.error(f"Failed to get valid page after all attempts: {str(final_error)}")
-        raise
+            logger.info("Successfully created page after browser reinitialization")
+            return page, context
+        except Exception as reinit_error:
+            logger.critical(f"Critical error: Failed to get page even after browser reinitialization: {str(reinit_error)}")
+            raise Exception("Could not get a valid page or browser after multiple attempts")
 
 # Cache for page analysis results
 # Structure: {url: {"timestamp": datetime, "data": analysis_result}}
@@ -262,60 +241,92 @@ def cache_analysis(url: str, data: Any):
 async def analyze_webpage(webpage_info: WebpageInfo):
     """Endpoint that analyzes a webpage using the browser agent."""
     try:
-        # Get a valid page, possibly creating a new context if needed
-        page, new_context_created = await get_valid_page()
+        # Get a fresh page and context
+        page, context = await get_valid_page()
         
         # Navigate to the specified URL
-        await page.goto(webpage_info.link)
+        try:
+            await page.goto(webpage_info.link)
+        except Exception as nav_error:
+            logger.error(f"Navigation error: {str(nav_error)}")
+            await context.close()
+            raise HTTPException(status_code=400, detail=f"Failed to navigate to {webpage_info.link}: {str(nav_error)}")
         
-        task = """Analyze the webpage and in the open tab list all the elements that users can engage with. Only show the viewable elements:
+        task = """Analyze the webpage and in the open tab list all the elements that users can engage with. Only show the viewable elements.
 
-1. For clickable elements (buttons, links, etc.):
+Return a single JSON array of elements with the following structure:
+
 {
-  "clickElements": [
+  "elements": [
     {
+      "type": "click", 
       "id": "string or null if not available",
       "label": "text displayed on the element",
-      "description": "brief description of what this element does"
-    }
-  ]
-}
-
-2. For selection elements (dropdowns, radio groups, etc.):
-{
-  "selectElements": [
+      "description": "brief description of what this element does",
+      "importance": 8 // On a scale from 1-10, how important this element is for users
+    },
     {
+      "type": "select",
       "id": "string or null if not available",
       "label": "text associated with this selection element",
       "description": "what this selection controls or affects",
-      "options": ["option1", "option2", "option3"]
-    }
-  ]
-}
-
-3. For input fields:
-{
-  "inputElements": [
+      "options": ["option1", "option2", "option3"],
+      "importance": 7 // On a scale from 1-10, how important this element is for users
+    },
     {
+      "type": "input",
       "id": "string or null if not available",
       "label": "field label text",
       "description": "what information this field collects",
       "placeholder": "placeholder text if present, otherwise empty string",
-      "type": "text, number, email, or password"
+      "inputType": "text, number, email, or password",
+      "importance": 9 // On a scale from 1-10, how important this element is for users
+    },
+    {
+      "type": "form",
+      "id": "string or null if not available",
+      "description": "what purpose this form serves",
+      "submitButton": {
+        "id": "string or null if not available",
+        "label": "text on the submit button"
+      },
+      "inputs": [
+        {
+          "id": "string or null if not available",
+          "label": "field label text",
+          "description": "what information this field collects",
+          "placeholder": "placeholder text if present, otherwise empty string",
+          "inputType": "text, number, email, or password",
+          "required": true or false
+        }
+      ],
+      "importance": 10 // Forms are typically high importance elements
     }
   ]
 }
 
+IMPORTANT INSTRUCTIONS FOR FORMS:
+- Actively look for elements that should be grouped together into forms
+- Always group search inputs with their search buttons into a form
+- If a search input exists without a visible button, still create a form and add a dummy submit button with label "Search"
+- For login forms, group username/email and password fields together
+- Group related inputs like address fields (street, city, state, zip) into a single form
+- If a set of radio buttons or checkboxes appear related, group them into a form
+- ANY input field that submits data when pressing Enter should be considered a form, even if no visible submit button exists
+
 Ensure you:
 - Include only elements that are currently visible and interactive
+- Identify forms and group their inputs together with the submit button
+- Evaluate importance based on: prominence on page, typical user goals, and whether the element is required
+- Sort elements by importance (highest to lowest)
 - Accurately capture all available options for select elements
-- Determine the correct input type (text/number/email/password)
+- Determine the correct input type (text/number/email/password) for input fields
 - Use the exact element text for labels
 - Provide meaningful descriptions of each element's purpose
 - Return null for missing IDs rather than omitting the field
 
 The output must be valid JSON that strictly follows this structure.
-DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE"""
+DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE PAGE."""
         
         model = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
         agent = Agent(task, model, controller=controller, use_vision=True, browser=browser)
@@ -326,7 +337,8 @@ DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE"""
         # Get the final result
         contenuto_estratto = result.final_result()
         
-        # We don't need to close the context since we're reusing it
+        # Always close the context when done
+        await context.close()
         
         if not contenuto_estratto:
             return {"success": False, "message": "No result obtained from analysis"}
@@ -373,66 +385,95 @@ def fix_json_format(text):
 async def analyze_current_page():
     """Endpoint that analyzes the currently open page using the browser agent."""
     try:
-        # Get a valid page, possibly creating a new context if needed
-        page, browser_context = await get_valid_page()
+        # Get a fresh page and context
+        page, context = await get_valid_page()
         
         # Get the current URL
-        current_url = await page.evaluate("window.location.href")
+        current_url = page.url
         
         # Check if we have a cached result for this URL
         cached_result = get_cached_analysis(current_url)
         if cached_result:
+            # Always close the context when done
+            await context.close()
             return {"success": True, "data": cached_result, "cached": True}
         
         # Run the analysis on the current page
-        task = """Analyze the webpage and in the open tab list all the elements that users can engage with. Only show the viewable elements:
+        task = """Analyze the webpage and in the open tab list all the elements that users can engage with. Only show the viewable elements.
 
-1. For clickable elements (buttons, links, etc.):
+Return a single JSON array of elements with the following structure:
+
 {
-  "clickElements": [
+  "elements": [
     {
+      "type": "click", 
       "id": "string or null if not available",
       "label": "text displayed on the element",
-      "description": "brief description of what this element does"
-    }
-  ]
-}
-
-2. For selection elements (dropdowns, radio groups, etc.):
-{
-  "selectElements": [
+      "description": "brief description of what this element does",
+      "importance": 8 // On a scale from 1-10, how important this element is for users
+    },
     {
+      "type": "select",
       "id": "string or null if not available",
       "label": "text associated with this selection element",
       "description": "what this selection controls or affects",
-      "options": ["option1", "option2", "option3"]
-    }
-  ]
-}
-
-3. For input fields:
-{
-  "inputElements": [
+      "options": ["option1", "option2", "option3"],
+      "importance": 7 // On a scale from 1-10, how important this element is for users
+    },
     {
+      "type": "input",
       "id": "string or null if not available",
       "label": "field label text",
       "description": "what information this field collects",
       "placeholder": "placeholder text if present, otherwise empty string",
-      "type": "text, number, email, or password"
+      "inputType": "text, number, email, or password",
+      "importance": 9 // On a scale from 1-10, how important this element is for users
+    },
+    {
+      "type": "form",
+      "id": "string or null if not available",
+      "description": "what purpose this form serves",
+      "submitButton": {
+        "id": "string or null if not available",
+        "label": "text on the submit button"
+      },
+      "inputs": [
+        {
+          "id": "string or null if not available",
+          "label": "field label text",
+          "description": "what information this field collects",
+          "placeholder": "placeholder text if present, otherwise empty string",
+          "inputType": "text, number, email, or password",
+          "required": true or false
+        }
+      ],
+      "importance": 10 // Forms are typically high importance elements
     }
   ]
 }
 
+IMPORTANT INSTRUCTIONS FOR FORMS:
+- Actively look for elements that should be grouped together into forms
+- Always group search inputs with their search buttons into a form
+- If a search input exists without a visible button, still create a form and add a dummy submit button with label "Search"
+- For login forms, group username/email and password fields together
+- Group related inputs like address fields (street, city, state, zip) into a single form
+- If a set of radio buttons or checkboxes appear related, group them into a form
+- ANY input field that submits data when pressing Enter should be considered a form, even if no visible submit button exists
+
 Ensure you:
 - Include only elements that are currently visible and interactive
+- Identify forms and group their inputs together with the submit button
+- Evaluate importance based on: prominence on page, typical user goals, and whether the element is required
+- Sort elements by importance (highest to lowest)
 - Accurately capture all available options for select elements
-- Determine the correct input type (text/number/email/password)
+- Determine the correct input type (text/number/email/password) for input fields
 - Use the exact element text for labels
 - Provide meaningful descriptions of each element's purpose
 - Return null for missing IDs rather than omitting the field
 
 The output must be valid JSON that strictly follows this structure.
-DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE"""
+DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE PAGE."""
         
         model = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
         agent = Agent(task, model, controller=controller, use_vision=True, browser=browser)
@@ -443,7 +484,8 @@ DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE"""
         # Get the final result
         contenuto_estratto = result.final_result()
         
-        # Don't close the context since we want to keep the page for future interactions
+        # Always close the context when done
+        await context.close()
         
         if not contenuto_estratto:
             return {"success": False, "message": "No result obtained from analysis"}
@@ -472,30 +514,30 @@ DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE"""
 async def execute_action(request: ActionRequest):
     """Endpoint that executes a specific action extracted previously on the current page."""
     try:
-        # Get a valid page, possibly creating a new context if needed
-        page, browser_context = await get_valid_page()
+        # Get a fresh page and context
+        page, context = await get_valid_page()
         
         # Get the current URL before the action
-        current_url = await page.evaluate("window.location.href")
-        
-        # Build a description of the element based on all available details
-        element_identifiers = []
-        
-        if request.element_id and request.element_id != "null":
-            element_identifiers.append(f'ID "{request.element_id}"')
-            
-        if request.element_label:
-            element_identifiers.append(f'text or label "{request.element_label}"')
-            
-        if not element_identifiers:
-            raise HTTPException(status_code=400, detail="No identifier provided for the element")
-            
-        element_description = " or ".join(element_identifiers)
+        current_url = page.url
         
         # Build the prompt based on the action type
         action_prompt = ""
         
         if request.action_type == ActionType.CLICK:
+            # Build a description of the element based on all available details
+            element_identifiers = []
+            
+            if request.element_id and request.element_id != "null":
+                element_identifiers.append(f'ID "{request.element_id}"')
+                
+            if request.element_label:
+                element_identifiers.append(f'text or label "{request.element_label}"')
+                
+            if not element_identifiers:
+                raise HTTPException(status_code=400, detail="No identifier provided for the element")
+                
+            element_description = " or ".join(element_identifiers)
+            
             action_prompt = f"""On the currently open web page,
             find and click on the element with {element_description}.
             
@@ -505,9 +547,26 @@ async def execute_action(request: ActionRequest):
             3. Execute a click on that element
             4. Describe in detail what happened after the click (new page, popup, change on the page, etc.)
             
-            IMPORTANT: If the ID is not available, focus on the element's text or other visual identifiers."""
+            IMPORTANT: 
+            - If the ID is not available, focus on the element's text or other visual identifiers
+            - ONLY perform the single click action described above and nothing more
+            - DO NOT continue with any additional actions after the click unless explicitly instructed"""
             
         elif request.action_type == ActionType.SELECT:
+            # Build a description of the element based on all available details
+            element_identifiers = []
+            
+            if request.element_id and request.element_id != "null":
+                element_identifiers.append(f'ID "{request.element_id}"')
+                
+            if request.element_label:
+                element_identifiers.append(f'text or label "{request.element_label}"')
+                
+            if not element_identifiers:
+                raise HTTPException(status_code=400, detail="No identifier provided for the element")
+                
+            element_description = " or ".join(element_identifiers)
+            
             action_prompt = f"""On the currently open web page,
             find the selector with {element_description} and select the option "{request.value}".
             
@@ -517,9 +576,26 @@ async def execute_action(request: ActionRequest):
             3. If the exact option doesn't exist, choose the most similar one
             4. Describe the result of the selection and any changes on the page
             
-            IMPORTANT: If the ID is not available, focus on the selector's label or other visual identifiers."""
+            IMPORTANT: 
+            - If the ID is not available, focus on the selector's label or other visual identifiers
+            - ONLY perform the single select action described above and nothing more
+            - DO NOT continue with any additional actions after the selection unless explicitly instructed"""
             
         elif request.action_type == ActionType.INPUT:
+            # Build a description of the element based on all available details
+            element_identifiers = []
+            
+            if request.element_id and request.element_id != "null":
+                element_identifiers.append(f'ID "{request.element_id}"')
+                
+            if request.element_label:
+                element_identifiers.append(f'text or label "{request.element_label}"')
+                
+            if not element_identifiers:
+                raise HTTPException(status_code=400, detail="No identifier provided for the element")
+                
+            element_description = " or ".join(element_identifiers)
+            
             action_prompt = f"""On the currently open web page,
             find the input field with {element_description} and enter the value "{request.value}".
             
@@ -530,7 +606,81 @@ async def execute_action(request: ActionRequest):
             4. DO NOT press enter or submit the form after input, unless specifically requested
             5. Describe the state of the field after input and any changes on the page
             
-            IMPORTANT: If the ID is not available, focus on the field's label, placeholder, or other visual identifiers."""
+            IMPORTANT: 
+            - If the ID is not available, focus on the field's label, placeholder, or other visual identifiers
+            - ONLY perform the single input action described above and nothing more
+            - DO NOT continue with any additional actions after entering the value unless explicitly instructed"""
+            
+        elif request.action_type == ActionType.FORM:
+            # Form filling requires a different approach
+            form_inputs_json = json.dumps([input_model.dict() for input_model in request.form_inputs])
+            
+            # Determine if this is likely a search form
+            is_search_form = False
+            search_terms = ["search", "cerca", "find", "query", "q", "s", "keyword", "buscar", "recherche"]
+            
+            # Check input fields and their descriptions for search terms
+            for input_item in request.form_inputs:
+                field_id = input_item.field_id or ""
+                field_label = input_item.field_label or ""
+                
+                # Check if any search terms appear in the field ID or label
+                if any(term.lower() in field_id.lower() for term in search_terms) or \
+                   any(term.lower() in field_label.lower() for term in search_terms):
+                    is_search_form = True
+                    break
+            
+            if request.submit_form:
+                if is_search_form:
+                    submit_instructions = """After filling the search field, you have two options to submit the search:
+                    
+                    Option 1: Press the ENTER key while the search field is active
+                    - After typing the search term, press Enter on the keyboard
+                    - This is often more reliable for search forms
+                    
+                    Option 2: Click the search button if visible
+                    - Look for a button with a magnifying glass icon
+                    - Or a button with text like "Search", "Go", "Find", etc.
+                    - The button is typically next to the search field
+                    
+                    Try Option 1 (pressing Enter) first, and only if that doesn't work, try Option 2 (clicking the button).
+                    """
+                else:
+                    submit_instructions = """After filling all fields, find and CLICK the submit button of the form. 
+                    Look for:
+                    - A button with text like "Submit", "Send", "Login", "Sign In", "Continue", etc.
+                    - A button near the form fields that appears to be the primary action
+                    - An icon button that indicates submission
+                    
+                    You MUST physically click the submit button, not just press Enter or call form.submit().
+                    """
+            else:
+                submit_instructions = "After filling all fields, DO NOT submit the form or click any buttons."
+            
+            action_prompt = f"""On the currently open web page,
+            fill out a form with the following inputs:
+            
+            {form_inputs_json}
+            
+            Detailed instructions:
+            1. For each input in the list:
+               a. Find the field using its ID or label
+               b. Click on the field
+               c. Enter the specified value
+            2. {submit_instructions}
+            
+            When identifying form fields:
+            - For fields with ID, use that as the primary identifier
+            - For fields with no ID, use the label text
+            - Look for labels near the input fields
+            - Consider placeholder text as a fallback identifier
+            
+            IMPORTANT:
+            - Fill ONLY the fields specified in the list
+            - {"For search forms, prefer pressing ENTER in the search field over clicking buttons" if is_search_form else "If instructed to submit, you MUST find and CLICK the actual submit button"}
+            - DO NOT continue with any additional actions after the form interaction
+            - Report exactly what you did and the result, including how you submitted the form"""
+            
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported action type: {request.action_type}")
         
@@ -543,7 +693,7 @@ async def execute_action(request: ActionRequest):
         action_result = result.final_result()
         
         # Get the URL after the action
-        new_url = await page.evaluate("window.location.href")
+        new_url = page.url
         
         # Invalidate cache for the page since it might have changed
         invalidate_cache(current_url)
@@ -552,20 +702,38 @@ async def execute_action(request: ActionRequest):
         if new_url != current_url:
             invalidate_cache(new_url)
         
-        # Don't close the browser context even if we created a new one - keep it for future use
+        # Always close the context when done
+        await context.close()
         
         if not action_result:
             return {"success": False, "message": "No result obtained from executing the action"}
         
-        return {
+        # Prepare the response based on action type
+        response = {
             "success": True,
             "action_type": request.action_type,
-            "element_description": element_description,
-            "value": request.value,
             "result": action_result,
             "url_changed": new_url != current_url,
             "new_url": new_url if new_url != current_url else None
         }
+        
+        # Add action-specific details to the response
+        if request.action_type == ActionType.CLICK:
+            element_description = " or ".join(element_identifiers)
+            response["element_description"] = element_description
+        elif request.action_type == ActionType.SELECT:
+            element_description = " or ".join(element_identifiers)
+            response["element_description"] = element_description
+            response["value"] = request.value
+        elif request.action_type == ActionType.INPUT:
+            element_description = " or ".join(element_identifiers)
+            response["element_description"] = element_description
+            response["value"] = request.value
+        elif request.action_type == ActionType.FORM:
+            response["form_inputs"] = [input_model.dict() for input_model in request.form_inputs]
+            response["submitted"] = request.submit_form
+        
+        return response
             
     except ValueError as e:
         # Handle validation errors
@@ -582,20 +750,20 @@ async def execute_action(request: ActionRequest):
 async def get_current_page():
     """Endpoint that returns information about the currently open page."""
     try:
-        # Get a valid page, possibly creating a new context if needed
-        page, browser_context = await get_valid_page()
+        # Get a fresh page and context
+        page, context = await get_valid_page()
         
-        # Get only the URL of the current page using Python method
+        # Get only the URL of the current page
         url = page.url
         
-        # Create the response with the same structure, but only including URL
-        page_info = {
-            "url": url
-        }
-            
+        # Always close the context when done
+        await context.close()
+        
         return {
             "success": True,
-            "page_info": page_info
+            "page_info": {
+                "url": url
+            }
         }
             
     except Exception as e:
@@ -623,54 +791,81 @@ browser = Browser(
 async def browser_agent_task():
 	"""Main function to execute the agent task."""
 	
-	task = """Analyze the webpage and in the open tab list all the elements that users can engage with. Only show the viewable elements:
+	task = """Analyze the webpage and in the open tab and list all the elements that users can engage with. Only show the viewable elements.
 
-1. For clickable elements (buttons, links, etc.):
+Return a single JSON array of elements with the following structure:
+
 {
-  "clickElements": [
+  "elements": [
     {
+      "type": "click", 
       "id": "string or null if not available",
       "label": "text displayed on the element",
-      "description": "brief description of what this element does"
-    }
-  ]
-}
-
-2. For selection elements (dropdowns, radio groups, etc.):
-{
-  "selectElements": [
+      "description": "brief description of what this element does",
+      "importance": 8 // On a scale from 1-10, how important this element is for users
+    },
     {
+      "type": "select",
       "id": "string or null if not available",
       "label": "text associated with this selection element",
       "description": "what this selection controls or affects",
-      "options": ["option1", "option2", "option3"]
-    }
-  ]
-}
-
-3. For input fields:
-{
-  "inputElements": [
+      "options": ["option1", "option2", "option3"],
+      "importance": 7 // On a scale from 1-10, how important this element is for users
+    },
     {
+      "type": "input",
       "id": "string or null if not available",
       "label": "field label text",
       "description": "what information this field collects",
       "placeholder": "placeholder text if present, otherwise empty string",
-      "type": "text, number, email, or password"
+      "inputType": "text, number, email, or password",
+      "importance": 9 // On a scale from 1-10, how important this element is for users
+    },
+    {
+      "type": "form",
+      "id": "string or null if not available",
+      "description": "what purpose this form serves",
+      "submitButton": {
+        "id": "string or null if not available",
+        "label": "text on the submit button"
+      },
+      "inputs": [
+        {
+          "id": "string or null if not available",
+          "label": "field label text",
+          "description": "what information this field collects",
+          "placeholder": "placeholder text if present, otherwise empty string",
+          "inputType": "text, number, email, or password",
+          "required": true or false
+        }
+      ],
+      "importance": 10 // Forms are typically high importance elements
     }
   ]
 }
 
+IMPORTANT INSTRUCTIONS FOR FORMS:
+- Actively look for elements that should be grouped together into forms
+- Always group search inputs with their search buttons into a form
+- If a search input exists without a visible button, still create a form and add a dummy submit button with label "Search"
+- For login forms, group username/email and password fields together
+- Group related inputs like address fields (street, city, state, zip) into a single form
+- If a set of radio buttons or checkboxes appear related, group them into a form
+- ANY input field that submits data when pressing Enter should be considered a form, even if no visible submit button exists
+
 Ensure you:
 - Include only elements that are currently visible and interactive
+- Identify forms and group their inputs together with the submit button
+- Evaluate importance based on: prominence on page, typical user goals, and whether the element is required
+- Sort elements by importance (highest to lowest)
 - Accurately capture all available options for select elements
-- Determine the correct input type (text/number/email/password)
+- Determine the correct input type (text/number/email/password) for input fields
 - Use the exact element text for labels
 - Provide meaningful descriptions of each element's purpose
 - Return null for missing IDs rather than omitting the field
 
 The output must be valid JSON that strictly follows this structure.
-DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE"""
+DO NOT CLICK ON ANY ELEMENTS, JUST ANALYZE THE PAGE."""
 
 	model = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
 	# Create a new browser context and get a page
