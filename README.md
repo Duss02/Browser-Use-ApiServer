@@ -1,4 +1,5 @@
-Here is a README file tailored for your `server.py` file, including instructions for setting up `uvicorn` and configuring the environment variables.
+[Browser Use](https://github.com/browser-use/browser-use) Api extension for browser state and action controls.
+
 
 # Link client
 https://github.com/Duss02/Hackathon25-WebApp
