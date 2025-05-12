@@ -1,4 +1,4 @@
-[Browser Use](https://github.com/browser-use/browser-use) Api extension for browser state and action controls.
+# [Browser Use](https://github.com/browser-use/browser-use) Server for browser state and action controls.
 
 
 # Link client
@@ -213,5 +213,3 @@ logging.basicConfig(level=logging.INFO)
 This project is licensed under the MIT License. See the LICENSE file for details.
 
 ---
-
-Feel free to customize this README further based on your project needs!
